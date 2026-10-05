@@ -70,8 +70,10 @@ class RunnerCase(unittest.IsolatedAsyncioTestCase):
         self._tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self._tmp.cleanup)
         self.folder = Path(self._tmp.name)
-        self.received = []      # (host, key, method, isi)
+        self.received = []      # (host, key, method, isi) — tanpa laporan status
+        self.heartbeats = []    # (host, isi)
         self.sources = Sources()
+        self.pinged = []
         for name in ("START_STAGGER", "RESTART_START", "RESTART_MAX"):
             patcher = mock.patch.object(runner, name, 0.01)
             patcher.start()
@@ -84,15 +86,20 @@ class RunnerCase(unittest.IsolatedAsyncioTestCase):
 
     def http_client(self):
         def handler(request):
-            self.received.append((
-                request.headers["host"], request.headers["authorization"],
-                request.url.path.rsplit("/", 1)[1], json.loads(request.content),
-            ))
+            method = request.url.path.rsplit("/", 1)[1]
+            body = json.loads(request.content)
+            if method == "heartbeat":
+                self.heartbeats.append((request.headers["host"], body))
+            else:
+                self.received.append((
+                    request.headers["host"], request.headers["authorization"], method, body,
+                ))
             return httpx.Response(200, json={})
         return httpx.AsyncClient(transport=httpx.MockTransport(handler))
 
     async def run_until(self, settings, condition, clients=None, **options):
         stop = asyncio.Event()
+        options.setdefault("ping", self.fake_ping)
         task = asyncio.create_task(runner.run_all(
             settings, clients or settings.clients, stop,
             source_factory=self.sources, http_factory=self.http_client, **options,
@@ -103,6 +110,10 @@ class RunnerCase(unittest.IsolatedAsyncioTestCase):
             await asyncio.sleep(0.005)
         stop.set()
         await asyncio.wait_for(task, 3.0)
+
+    async def fake_ping(self, url, stop):
+        self.pinged.append(url)
+        await stop.wait()
 
     def calls_for(self, host):
         return [(method, body["external_ref"]) for h, _, method, body in self.received if h == host]
@@ -161,6 +172,32 @@ class TestSupervision(RunnerCase):
         self.assertEqual([s.account for s in self.sources.created].count("toko.a"), 3)
         self.assertEqual([s.account for s in self.sources.created].count("toko.b"), 1)
         self.assertTrue(all(source.closed for source in self.sources.created))
+
+
+class TestReporting(RunnerCase):
+    async def test_each_client_reports_its_own_account_to_its_own_odoo(self):
+        await self.run_until(
+            self.settings(),
+            lambda: {body["state"] for _, body in self.heartbeats} >= {"connected"}
+            and len({host for host, _ in self.heartbeats}) == 2 and len(self.received) >= 4,
+        )
+        connected = {
+            (host, body["external_account_ref"], body["external_ref"])
+            for host, body in self.heartbeats if body["state"] == "connected"
+        }
+        self.assertEqual(connected, {
+            ("aaaa.contoh.id", "toko.a", "ruang-toko.a"),
+            ("bbbb.contoh.id", "toko.b", "ruang-toko.b"),
+        })
+
+    async def test_monitor_ping_runs_only_when_configured(self):
+        await self.run_until(self.settings(), lambda: len(self.received) >= 4)
+        self.assertEqual(self.pinged, [])
+
+        self.received.clear()
+        with_url = dict(KEYS, BRIDGE_HEALTHCHECK_URL="https://pemantau.contoh/ping/rahasia")
+        await self.run_until(self.settings(environ=with_url), lambda: bool(self.pinged))
+        self.assertEqual(self.pinged, ["https://pemantau.contoh/ping/rahasia"])
 
 
 class TestUnfollowedAccount(RunnerCase):

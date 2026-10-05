@@ -16,12 +16,14 @@ import contextlib
 import logging
 from collections.abc import Callable, Iterable
 
+from .heartbeat import Heartbeat
 from .logs import labelled
 from .odoo import OdooDoor, new_http_client
 from .outbox import Outbox
+from .ping import ping_forever
 from .reader import ROOM_PREFIX, Reader, room_key
 from .sender import Sender
-from .settings import SIGN_KEY_ENV, ClientSettings, Settings, SettingsError
+from .settings import HEALTHCHECK_ENV, SIGN_KEY_ENV, ClientSettings, Settings, SettingsError
 
 _logger = logging.getLogger(__name__)
 
@@ -70,18 +72,23 @@ async def run_client(
     with Outbox(client.queue_path) as outbox:
         close_unfollowed(outbox, [account], client.code)
         async with http_factory() as http:
+            door = OdooDoor(http, client)
             sender = Sender(
-                outbox, OdooDoor(http, client),
-                keep_sent_days=settings.keep_sent_days, label=client.code,
+                outbox, door, keep_sent_days=settings.keep_sent_days, label=client.code,
             )
             source = source_factory(account, settings.sign_api_key or None)
+            # Pelapor dibuat lebih dulu dengan pengambil keadaan yang ditunda,
+            # karena pembaca butuh `wake`-nya dan ia butuh keadaan pembaca.
+            heartbeat = Heartbeat(door, account, lambda: reader.status, label=client.code)
             reader = Reader(
                 source, outbox, account=account, wake=sender.wake,
+                on_status=heartbeat.wake,
                 poll_seconds=settings.poll_seconds, label=client.code,
             )
             tasks = [
                 asyncio.create_task(sender.run(unit_stop)),
                 asyncio.create_task(reader.run(unit_stop)),
+                asyncio.create_task(heartbeat.run(unit_stop)),
             ]
             stopper = asyncio.create_task(stop.wait())
             try:
@@ -155,6 +162,7 @@ async def run_all(
     tiktok: str | None = None,
     source_factory: Callable | None = None,
     http_factory: Callable = new_http_client,
+    ping: Callable = ping_forever,
 ) -> None:
     ready = ready_clients(clients, tiktok)
     if source_factory is None:
@@ -176,10 +184,17 @@ async def run_all(
             source_factory=source_factory, http_factory=http_factory,
         )
 
-    await asyncio.gather(*(
+    jobs = [
         supervise(client.code, unit(client, account), stop, start_delay=index * START_STAGGER)
         for index, (client, account) in enumerate(ready)
-    ))
+    ]
+    if settings.healthcheck_url:
+        jobs.append(supervise("ping", lambda: ping(settings.healthcheck_url, stop), stop))
+    else:
+        _logger.warning(
+            "Variabel %s kosong: bridge berjalan tanpa ping ke pemantau.", HEALTHCHECK_ENV,
+        )
+    await asyncio.gather(*jobs)
 
 
 async def _pause(stop: asyncio.Event, seconds: float) -> None:

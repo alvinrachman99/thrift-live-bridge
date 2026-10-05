@@ -136,9 +136,28 @@ def _dump(event) -> str:
         return repr(event)[:DUMP_MAX]
 
 
+# Alasan singkat untuk galat yang sudah dikenal. Teks ini sampai ke layar
+# Status Bot di Odoo, jadi ditulis untuk admin; nama galatnya tetap disertakan
+# untuk yang mengurus server. Kuncinya nama kelas, dicari sampai ke induknya.
+_REASONS = {
+    "UserNotFoundError": "akun tidak ditemukan atau belum pernah siaran",
+    "WebcastBlockedError": "sambungan ditolak TikTok",
+    "SignatureRateLimitError": "penyedia tanda tangan meminta menunggu",
+    "SignAPIError": "penyedia tanda tangan gagal",
+    "ConnectionClosed": "sambungan terputus",
+    "TransportError": "jaringan bermasalah",
+    "KeyError": "jawaban TikTok tidak dikenali",
+    "TypeError": "jawaban TikTok tidak dikenali",
+}
+
+
 def _brief(exc: BaseException) -> str:
+    name = type(exc).__name__
+    for cls in type(exc).__mro__:
+        if cls.__name__ in _REASONS:
+            return f"{_REASONS[cls.__name__]} ({name})"
     text = (str(exc).strip().splitlines() or [""])[0]
-    return f"{type(exc).__name__}: {text}"[:ERROR_TEXT_MAX].rstrip(": ")
+    return f"{name}: {text}"[:ERROR_TEXT_MAX].rstrip(": ")
 
 
 class TikTokSource:

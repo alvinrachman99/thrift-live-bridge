@@ -60,7 +60,9 @@ class TestRun(unittest.IsolatedAsyncioTestCase):
         return load_settings(self.folder / "clients.toml", {"BRIDGE_KEY_UJI": "kunci", **environ})
 
     def handler(self, request):
-        self.received.append((request.url.path.rsplit("/", 1)[1], json.loads(request.content)))
+        method = request.url.path.rsplit("/", 1)[1]
+        if method != "heartbeat":
+            self.received.append((method, json.loads(request.content)))
         return httpx.Response(200, json={})
 
     async def run_until(self, settings, condition, **options):

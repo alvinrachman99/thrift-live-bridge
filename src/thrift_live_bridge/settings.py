@@ -21,6 +21,9 @@ DEFAULT_POLL_SECONDS = 60
 MIN_POLL_SECONDS = 5
 # Key sign server: satu untuk semua client, karena itu bukan setelan per client.
 SIGN_KEY_ENV = "EULER_API_KEY"
+# Alamat ping layanan pemantau. Rahasia: siapa pun yang tahu alamatnya bisa
+# memalsukan tanda hidup.
+HEALTHCHECK_ENV = "BRIDGE_HEALTHCHECK_URL"
 
 # Kode client dipakai sebagai nama file antrian, jadi hurufnya dibatasi.
 _CODE_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
@@ -61,6 +64,7 @@ class Settings:
     keep_sent_days: int = DEFAULT_KEEP_SENT_DAYS
     poll_seconds: int = DEFAULT_POLL_SECONDS
     sign_api_key: str = field(default="", repr=False)
+    healthcheck_url: str = field(default="", repr=False)
 
     def client(self, code: str | None = None) -> ClientSettings:
         """Client dengan kode itu; tanpa kode, satu-satunya client yang ada."""
@@ -155,9 +159,13 @@ def load_settings(
             odoo_db=_text(entry, "odoo_db", where),
             tiktok=(_text(entry, "tiktok", where) or "").lstrip("@").strip() or None,
         ))
+    healthcheck_url = (environ.get(HEALTHCHECK_ENV) or "").strip()
+    if healthcheck_url and not healthcheck_url.startswith(("http://", "https://")):
+        raise SettingsError(f"Variabel {HEALTHCHECK_ENV} harus diawali http:// atau https://.")
     return Settings(
         clients=tuple(clients),
         keep_sent_days=keep_sent_days,
         poll_seconds=poll_seconds,
         sign_api_key=(environ.get(SIGN_KEY_ENV) or "").strip(),
+        healthcheck_url=healthcheck_url,
     )

@@ -58,9 +58,14 @@ class ReaderCase(unittest.IsolatedAsyncioTestCase):
         self.addCleanup(self.outbox.close)
         self.pauses = []
         self.wakes = 0
+        self.statuses = []      # tiap perubahan keadaan: (state, room, failures)
 
     def wake(self):
         self.wakes += 1
+
+    def on_status(self):
+        status = self.reader.status
+        self.statuses.append((status.state, status.room, status.failures))
 
     async def run_reader(self, source, pauses):
         """Jalankan pembaca sampai ia sudah berhenti sejenak sebanyak `pauses` kali."""
@@ -71,7 +76,10 @@ class ReaderCase(unittest.IsolatedAsyncioTestCase):
             if len(self.pauses) >= pauses:
                 stop.set()
 
-        reader = Reader(source, self.outbox, account="toko", wake=self.wake, poll_seconds=POLL)
+        self.reader = reader = Reader(
+            source, self.outbox, account="toko", wake=self.wake,
+            on_status=self.on_status, poll_seconds=POLL,
+        )
         with mock.patch.object(Reader, "_pause", staticmethod(fake_pause)):
             await asyncio.wait_for(reader.run(stop), 2.0)
 
@@ -236,6 +244,46 @@ class TestStopAndRestart(ReaderCase):
         source = FakeSource(live=[True], connections=[[Connected("R1"), pin("P1"), pin("P2"), Ended()]])
         await self.run_reader(source, pauses=1)
         self.assertEqual(self.queued(), [("open", "R1"), ("pin", "R1", "P2"), ("close", "R1")])
+
+
+class TestStatus(ReaderCase):
+    async def test_one_broadcast_from_start_to_end(self):
+        source = FakeSource(live=[False, True], connections=[[Connected("R1"), pin("P1"), Ended()]])
+        await self.run_reader(source, pauses=2)
+        # "waiting" di awal tidak dihitung perubahan: itu memang keadaan mulanya.
+        self.assertEqual(self.statuses, [("connected", "R1", 0), ("waiting", None, 0)])
+
+    async def test_pin_time_is_remembered_without_an_extra_report(self):
+        row = {"external_message_ref": "P1", "nickname": "Budi", "date": "2026-10-05 12:00:00"}
+        source = FakeSource(live=[True], connections=[[Connected("R1"), Pin(row)]])
+        await self.run_reader(source, pauses=1)
+        self.assertEqual(self.reader.status.last_event, "2026-10-05 12:00:00")
+        self.assertEqual([state for state, *_ in self.statuses], ["connected", "retrying"])
+
+    async def test_failures_and_reason_are_reported(self):
+        source = FakeSource(live=[True, True, True], connections=[
+            [SourceError("WebcastBlockedError: ditolak")], [SourceError("WebcastBlockedError: ditolak")],
+            [Connected("R1"), SourceError("ConnectionClosedError")],
+        ])
+        await self.run_reader(source, pauses=3)
+        self.assertEqual(self.statuses, [
+            ("retrying", None, 1), ("retrying", None, 2),
+            ("connected", "R1", 0), ("retrying", "R1", 1),
+        ])
+        self.assertEqual(self.reader.status.message, "ConnectionClosedError")
+
+    async def test_unknown_live_status_is_reported_once(self):
+        error = SourceError("KeyError: data")
+        source = FakeSource(live=[error, error, False])
+        with self.assertLogs("thrift_live_bridge.reader", level="WARNING"):
+            await self.run_reader(source, pauses=3)
+        self.assertEqual(self.statuses, [("retrying", None, 0), ("waiting", None, 0)])
+
+    async def test_open_broadcast_from_before_restart_is_known_at_start(self):
+        self.outbox.set_meta(OPEN_ROOM, "R9")
+        reader = Reader(FakeSource(), self.outbox, account="@toko")
+        self.assertEqual(reader.status.room, "R9")
+        self.assertEqual(reader.status.state, "waiting")
 
 
 class TestTwoAccountsOneClient(ReaderCase):

@@ -5,8 +5,8 @@ Jembatan antara TikTok LIVE dan antrian order di Odoo. Saat host menyematkan
 ke Odoo sebagai satu baris antrian. Order baru dibuat di Odoo, oleh admin.
 
 **Status: sedang dibangun.** Yang sudah ada: antrian lokal, pengirim ke Odoo,
-pembaca siaran, dan banyak client dalam satu proses. Belum ada: laporan
-kesehatan ke Odoo dan kemasan Docker.
+pembaca siaran, banyak client dalam satu proses, laporan status ke Odoo, dan
+ping ke layanan pemantau. Belum ada: kemasan Docker.
 
 ## Rancangan
 
@@ -53,6 +53,20 @@ server.
   berhenti.
 - Baris log diawali kode client-nya, misalnya `[k7m2]`.
 
+## Laporan dan pemantauan
+
+Dua tanda hidup, untuk dua pihak yang berbeda:
+
+- **Ke Odoo, per akun** — tiap menit dan tiap keadaannya berubah, bridge
+  melaporkan: menunggu siaran, tersambung, atau gagal menyambung beserta
+  alasannya, dan kapan pin terakhir diterima. Odoo menampilkannya untuk admin,
+  dan menandai bridge "tidak terdengar" kalau laporannya berhenti lebih dari
+  tiga menit. Laporan ini tidak lewat antrian lokal: kalau Odoo tidak bisa
+  dihubungi, laporannya dilewati.
+- **Ke layanan pemantau, per proses** — satu ping tiap menit ke alamat di
+  `BRIDGE_HEALTHCHECK_URL` (misalnya healthchecks.io). Ping yang berhenti
+  berarti prosesnya mati atau macet, dan pengelola server diberi tahu.
+
 ## Tidak hilang, tidak dobel
 
 Setiap kejadian dari siaran ditulis dulu ke antrian lokal (satu file SQLite per
@@ -84,6 +98,7 @@ python -m unittest discover -s tests     # harus berakhir dengan OK
 
 ```bash
 export EULER_API_KEY=...                 # key sign server; jangan ditulis ke file yang ikut git
+export BRIDGE_HEALTHCHECK_URL=...        # alamat ping pemantau (boleh kosong); juga rahasia
 thrift-live-bridge run                   # semua client; Ctrl+C untuk berhenti
 thrift-live-bridge --client k7m2 run     # satu client saja
 thrift-live-bridge --client k7m2 run --tiktok akun   # ikuti akun lain, untuk menguji

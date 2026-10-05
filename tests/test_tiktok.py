@@ -251,6 +251,8 @@ class TestSourceFailures(SourceCase):
         with self.assertRaises(RateLimited) as caught:
             await self.collect()
         self.assertEqual(caught.exception.retry_after, 42.0)
+        self.assertEqual(
+            str(caught.exception), "penyedia tanda tangan meminta menunggu (SignatureRateLimitError)")
 
     async def test_rate_limited_without_header_still_waits(self):
         error = SignatureRateLimitError(
@@ -269,7 +271,7 @@ class TestSourceFailures(SourceCase):
         with self.assertRaises(SourceError) as caught:
             await self.collect()
         self.assertNotIsInstance(caught.exception, (NotLive, RateLimited))
-        self.assertIn("WebcastBlockedError", str(caught.exception))
+        self.assertEqual(str(caught.exception), "sambungan ditolak TikTok (WebcastBlockedError)")
 
     async def test_drop_after_events_delivers_them_first(self):
         self.client.script = [ConnectEvent(unique_id="toko", room_id=5), pin_event(pin_msg_id=1)]
@@ -280,6 +282,21 @@ class TestSourceFailures(SourceCase):
                 got.append(event)
         self.assertEqual([type(e) for e in got], [Connected, Pin])
         self.assertEqual(str(caught.exception), "ConnectionError: no close frame received")
+
+    async def test_known_failures_get_a_reason_an_admin_can_read(self):
+        from TikTokLive.client.errors import UserNotFoundError
+        cases = [
+            (UserNotFoundError("toko", "The requested user 'toko' is not capable of going LIVE ..."),
+             "akun tidak ditemukan atau belum pernah siaran (UserNotFoundError)"),
+            (httpx.ConnectError("gagal"), "jaringan bermasalah (ConnectError)"),
+            (KeyError("data"), "jawaban TikTok tidak dikenali (KeyError)"),
+        ]
+        for error, expected in cases:
+            with self.subTest(error=type(error).__name__):
+                self.client.live = error
+                with self.assertRaises(SourceError) as caught:
+                    await self.source.is_live()
+                self.assertEqual(str(caught.exception), expected)
 
     async def test_is_live_failure_is_a_source_error(self):
         self.client.live = KeyError("data")

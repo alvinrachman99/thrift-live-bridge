@@ -93,6 +93,21 @@ class TestLiveSettings(SettingsCase):
         self.assertNotIn("kunci-euler", repr(settings))
 
 
+class TestMonitorSetting(SettingsCase):
+    def test_ping_address_comes_from_environment_and_stays_out_of_repr(self):
+        url = "https://pemantau.contoh/ping/sangat-rahasia"
+        settings = load_settings(self.write(ONE_CLIENT), {"BRIDGE_HEALTHCHECK_URL": f" {url}\n"})
+        self.assertEqual(settings.healthcheck_url, url)
+        self.assertNotIn("sangat-rahasia", repr(settings))
+        self.assertEqual(load_settings(self.write(ONE_CLIENT), {}).healthcheck_url, "")
+
+    def test_ping_address_must_be_a_url(self):
+        with self.assertRaises(SettingsError) as caught:
+            load_settings(self.write(ONE_CLIENT), {"BRIDGE_HEALTHCHECK_URL": "sangat-rahasia"})
+        self.assertIn("BRIDGE_HEALTHCHECK_URL", str(caught.exception))
+        self.assertNotIn("sangat-rahasia", str(caught.exception))
+
+
 class TestSeveralClients(SettingsCase):
     TWO = ONE_CLIENT + '\n[[client]]\ncode = "k7m2"\nodoo_url = "http://caddy:8080"\n'
 
