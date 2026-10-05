@@ -18,6 +18,7 @@ import asyncio
 import logging
 from dataclasses import dataclass
 
+from .logs import labelled
 from .odoo import OdooDoor, Rejected, RetryLater
 from .outbox import Outbox
 
@@ -47,9 +48,13 @@ class Round:
 
 
 class Sender:
-    def __init__(self, outbox: Outbox, door: OdooDoor, *, keep_sent_days: int | None = None):
+    def __init__(
+        self, outbox: Outbox, door: OdooDoor, *,
+        keep_sent_days: int | None = None, label: str | None = None,
+    ):
         self._outbox = outbox
         self._door = door
+        self._log = labelled(_logger, label)
         # None = kiriman yang sudah sampai tidak pernah dibersihkan.
         self._keep_sent_days = keep_sent_days
         self._wake = asyncio.Event()
@@ -72,7 +77,7 @@ class Sender:
                 if item.rejections + 1 >= MAX_REJECTIONS:
                     self._outbox.mark_rejected(item.id, str(exc))
                     result.rejected += 1
-                    _logger.error(
+                    self._log.error(
                         "Kiriman #%s (%s) disisihkan setelah %s kali ditolak: %s",
                         item.id, item.kind, MAX_REJECTIONS, exc,
                     )
@@ -111,11 +116,11 @@ class Sender:
         """Catat perubahan keadaan saja, bukan setiap percobaan."""
         if result.blocked and not self._was_blocked:
             pending = self._outbox.counts()["pending"]
-            _logger.warning("Tertahan: %s. %s kiriman menunggu.", result.blocked, pending)
+            self._log.warning("Tertahan: %s. %s kiriman menunggu.", result.blocked, pending)
         elif not result.blocked and self._was_blocked:
-            _logger.info("Tersambung lagi. %s kiriman tertunda terkirim.", result.sent)
+            self._log.info("Tersambung lagi. %s kiriman tertunda terkirim.", result.sent)
         elif result.sent:
-            _logger.info("%s kiriman terkirim.", result.sent)
+            self._log.info("%s kiriman terkirim.", result.sent)
         self._was_blocked = bool(result.blocked)
 
     async def _sleep(self, stop: asyncio.Event, seconds: float, *, wakeable: bool) -> None:

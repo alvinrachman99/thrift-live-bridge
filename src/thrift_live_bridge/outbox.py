@@ -185,6 +185,14 @@ class Outbox:
         row = self._db.execute("SELECT value FROM meta WHERE key = ?", (key,)).fetchone()
         return row[0] if row else None
 
+    def meta_items(self, prefix: str) -> dict[str, str]:
+        """Semua catatan yang kuncinya berawalan `prefix`."""
+        rows = self._db.execute(
+            "SELECT key, value FROM meta WHERE substr(key, 1, ?) = ? ORDER BY key",
+            (len(prefix), prefix),
+        )
+        return dict(rows.fetchall())
+
     def set_meta(self, key: str, value: str | None) -> None:
         with self._db:
             if value is None:

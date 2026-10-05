@@ -28,6 +28,7 @@ import logging
 from collections.abc import Callable
 from dataclasses import dataclass
 
+from .logs import labelled
 from .outbox import Outbox
 from .source import Connected, Ended, LiveSource, NotLive, Pin, RateLimited, SourceError
 
@@ -39,8 +40,17 @@ LONG_PAUSE_AFTER = 10
 LONG_PAUSE = 600.0
 # Batas atas menunggu atas permintaan penyedia tanda tangan.
 RATE_LIMIT_MAX = 3600.0
-# Kunci catatan "siaran yang sesinya sedang terbuka" di antrian lokal.
-OPEN_ROOM = "open_room"
+# Awalan kunci catatan "siaran yang sesinya sedang terbuka" di antrian lokal.
+ROOM_PREFIX = "open_room:"
+
+
+def room_key(account: str) -> str:
+    """Kunci catatan itu untuk satu akun.
+
+    Per akun, bukan per client: satu client boleh mengikuti lebih dari satu
+    akun, dan siaran akun yang satu tidak boleh menutup sesi akun yang lain.
+    """
+    return ROOM_PREFIX + account.lstrip("@").strip().lower()
 
 
 def reconnect_delay(failures: int) -> float:
@@ -69,10 +79,13 @@ class Reader:
         account: str,
         wake: Callable[[], None] | None = None,
         poll_seconds: float = 60.0,
+        label: str | None = None,
     ):
         self._source = source
         self._outbox = outbox
         self._account = account
+        self._room_key = room_key(account)
+        self._log = labelled(_logger, label)
         self._wake = wake or (lambda: None)
         self._poll_seconds = poll_seconds
         self._waiting_logged = False
@@ -89,7 +102,7 @@ class Reader:
                     self._close_room("siaran sudah berakhir")
                     failures = 0
                     if not self._waiting_logged:
-                        _logger.info(
+                        self._log.info(
                             "Menunggu @%s siaran (diperiksa tiap %.0f detik).",
                             self._account, self._poll_seconds,
                         )
@@ -111,12 +124,12 @@ class Reader:
             failures = 1 if outcome.connected else failures + 1
             delay = max(reconnect_delay(failures), min(outcome.retry_after, RATE_LIMIT_MAX))
             if failures == LONG_PAUSE_AFTER:
-                _logger.error(
+                self._log.error(
                     "@%s: %s kali gagal menyambung berturut-turut. Selanjutnya dicoba "
                     "tiap %.0f menit. Selama itu pin tidak terbaca; pakai input manual.",
                     self._account, failures, LONG_PAUSE / 60,
                 )
-            _logger.warning(
+            self._log.warning(
                 "@%s: %s. Dicoba lagi dalam %.0f detik (gagal ke-%s).",
                 self._account, outcome.error or "sambungan putus", delay, failures,
             )
@@ -127,7 +140,7 @@ class Reader:
         try:
             return await self._source.is_live()
         except SourceError as exc:
-            _logger.warning("@%s: status siaran tidak bisa dipastikan (%s).", self._account, exc)
+            self._log.warning("@%s: status siaran tidak bisa dipastikan (%s).", self._account, exc)
             return None
 
     async def _follow(self, stop: asyncio.Event) -> _Outcome:
@@ -159,34 +172,34 @@ class Reader:
     # -- catatan ke antrian lokal -------------------------------------------
 
     def _open_room(self, room: str) -> None:
-        previous = self._outbox.get_meta(OPEN_ROOM)
+        previous = self._outbox.get_meta(self._room_key)
         if previous and previous != room:
             # Host memulai siaran baru; yang lama sudah pasti berakhir.
             self._outbox.enqueue_close(previous)
         # Catatan ditulis sebelum kirimannya. Kalau bridge mati di antaranya,
         # paling buruk ada "tutup sesi" untuk sesi yang belum pernah dibuka,
         # dan Odoo menjawab itu dengan tenang.
-        self._outbox.set_meta(OPEN_ROOM, room)
+        self._outbox.set_meta(self._room_key, room)
         self._outbox.enqueue_open(room, self._account)
         self._wake()
-        _logger.info("@%s: tersambung ke siaran %s.", self._account, room)
+        self._log.info("@%s: tersambung ke siaran %s.", self._account, room)
 
     def _queue_pin(self, room: str, row: dict) -> None:
         ref = row.get("external_message_ref", "tanpa ID")
         if self._outbox.enqueue_pin(room, row, self._account) is None:
-            _logger.debug("@%s: pin %s sudah pernah masuk; dilewati.", self._account, ref)
+            self._log.debug("@%s: pin %s sudah pernah masuk; dilewati.", self._account, ref)
             return
         self._wake()
-        _logger.info("@%s: pin %s masuk antrian.", self._account, ref)
+        self._log.info("@%s: pin %s masuk antrian.", self._account, ref)
 
     def _close_room(self, reason: str) -> None:
-        room = self._outbox.get_meta(OPEN_ROOM)
+        room = self._outbox.get_meta(self._room_key)
         if not room:
             return
         self._outbox.enqueue_close(room)
-        self._outbox.set_meta(OPEN_ROOM, None)
+        self._outbox.set_meta(self._room_key, None)
         self._wake()
-        _logger.info("@%s: sesi siaran %s ditutup (%s).", self._account, room, reason)
+        self._log.info("@%s: sesi siaran %s ditutup (%s).", self._account, room, reason)
 
     @staticmethod
     async def _pause(stop: asyncio.Event, seconds: float) -> None:

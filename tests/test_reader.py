@@ -6,11 +6,12 @@ from pathlib import Path
 from unittest import mock
 
 from thrift_live_bridge.outbox import Outbox
-from thrift_live_bridge.reader import LONG_PAUSE, OPEN_ROOM, Reader, reconnect_delay
+from thrift_live_bridge.reader import LONG_PAUSE, Reader, reconnect_delay, room_key
 from thrift_live_bridge.sender import Sender
 from thrift_live_bridge.source import Connected, Ended, NotLive, Pin, RateLimited, SourceError
 
 POLL = 60.0
+OPEN_ROOM = room_key("toko")
 
 
 def pin(ref):
@@ -235,6 +236,27 @@ class TestStopAndRestart(ReaderCase):
         source = FakeSource(live=[True], connections=[[Connected("R1"), pin("P1"), pin("P2"), Ended()]])
         await self.run_reader(source, pauses=1)
         self.assertEqual(self.queued(), [("open", "R1"), ("pin", "R1", "P2"), ("close", "R1")])
+
+
+class TestTwoAccountsOneClient(ReaderCase):
+    async def test_each_account_keeps_its_own_open_broadcast(self):
+        """Akun kedua yang tidak siaran tidak boleh menutup sesi akun pertama."""
+        first = FakeSource(live=[True], connections=[[Connected("R1"), pin("P1")]])
+        await self.run_reader(first, pauses=1)
+        self.assertEqual(self.outbox.get_meta(room_key("toko")), "R1")
+        self.queued()
+
+        stop = asyncio.Event()
+        other = Reader(FakeSource(live=[False]), self.outbox, account="@Toko.Kedua", poll_seconds=POLL)
+
+        async def fake_pause(_stop, seconds):
+            stop.set()
+
+        with mock.patch.object(Reader, "_pause", staticmethod(fake_pause)):
+            await asyncio.wait_for(other.run(stop), 2.0)
+        self.assertEqual(self.queued(), [])
+        self.assertEqual(self.outbox.get_meta(room_key("toko")), "R1")
+        self.assertEqual(room_key("@Toko.Kedua"), "open_room:toko.kedua")
 
 
 class FakeOdoo:

@@ -5,8 +5,8 @@ Jembatan antara TikTok LIVE dan antrian order di Odoo. Saat host menyematkan
 ke Odoo sebagai satu baris antrian. Order baru dibuat di Odoo, oleh admin.
 
 **Status: sedang dibangun.** Yang sudah ada: antrian lokal, pengirim ke Odoo,
-dan pembaca siaran untuk satu akun. Belum ada: banyak akun sekaligus, laporan
-kesehatan ke Odoo, dan kemasan Docker.
+pembaca siaran, dan banyak client dalam satu proses. Belum ada: laporan
+kesehatan ke Odoo dan kemasan Docker.
 
 ## Rancangan
 
@@ -40,6 +40,19 @@ TikTok LIVE ──► bridge ──► Odoo (module thrift_live)
   melanjutkan siaran yang sama, atau menutup sesinya kalau siaran itu ternyata
   sudah berakhir.
 
+## Banyak client
+
+Satu proses melayani semua client di file setelan. Tiap client punya antrian,
+pengirim, pembaca, dan API key sendiri; yang dipakai bersama hanya key sign
+server.
+
+- Client yang setelannya belum lengkap (key atau akunnya kosong) dilewati
+  dengan pesan galat; yang lain tetap jalan.
+- Client yang berhenti karena galat tak terduga dinyalakan lagi sendiri,
+  dengan jeda 5 detik yang berlipat sampai 60 detik. Client lain tidak ikut
+  berhenti.
+- Baris log diawali kode client-nya, misalnya `[k7m2]`.
+
 ## Tidak hilang, tidak dobel
 
 Setiap kejadian dari siaran ditulis dulu ke antrian lokal (satu file SQLite per
@@ -71,14 +84,15 @@ python -m unittest discover -s tests     # harus berakhir dengan OK
 
 ```bash
 export EULER_API_KEY=...                 # key sign server; jangan ditulis ke file yang ikut git
-thrift-live-bridge run                   # ikuti siaran dan kirim pin-nya; Ctrl+C untuk berhenti
-thrift-live-bridge run --tiktok akun     # ikuti akun lain, untuk menguji
+thrift-live-bridge run                   # semua client; Ctrl+C untuk berhenti
+thrift-live-bridge --client k7m2 run     # satu client saja
+thrift-live-bridge --client k7m2 run --tiktok akun   # ikuti akun lain, untuk menguji
 ```
 
 Bagian-bagiannya juga bisa dijalankan sendiri:
 
 ```bash
-thrift-live-bridge status                # isi antrian lokal
+thrift-live-bridge status                # isi antrian lokal semua client
 thrift-live-bridge send                  # kirim terus-menerus; Ctrl+C untuk berhenti
 thrift-live-bridge send --once           # kirim yang ada sekarang, lalu berhenti
 thrift-live-bridge requeue               # kembalikan kiriman yang disisihkan

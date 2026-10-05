@@ -30,3 +30,11 @@ odoo_db = "demo"
 # Nama variabel environment berisi API key user bot. Kalau baris ini dihapus,
 # namanya BRIDGE_KEY_<KODE>, di sini BRIDGE_KEY_DEMO.
 api_key_env = "BRIDGE_KEY_DEMO"
+
+# Client berikutnya tinggal menambah blok. Tiap client punya antrian dan API
+# key sendiri.
+# [[client]]
+# code = "demo2"
+# tiktok = "akun_lain"
+# odoo_url = "http://localhost:8069"
+# odoo_db = "demo2"
