@@ -91,6 +91,33 @@ class TestSurvival(OutboxCase):
         self.assertEqual(mode, 0o600)
 
 
+class TestMeta(OutboxCase):
+    def test_set_get_replace_clear(self):
+        self.assertIsNone(self.outbox.get_meta("open_room"))
+        self.outbox.set_meta("open_room", "R1")
+        self.outbox.set_meta("open_room", "R2")
+        self.assertEqual(self.outbox.get_meta("open_room"), "R2")
+        self.outbox.set_meta("open_room", None)
+        self.assertIsNone(self.outbox.get_meta("open_room"))
+
+    def test_survives_restart(self):
+        self.outbox.set_meta("open_room", "7412345678901234567")
+        self.outbox.close()
+        reopened = Outbox(self.path)
+        self.addCleanup(reopened.close)
+        self.assertEqual(reopened.get_meta("open_room"), "7412345678901234567")
+
+    def test_queue_file_from_before_meta_existed_still_opens(self):
+        self.outbox.enqueue_pin("R1", pin("P1"))
+        with self.outbox._db:
+            self.outbox._db.execute("DROP TABLE meta")
+        self.outbox.close()
+        reopened = Outbox(self.path)
+        self.addCleanup(reopened.close)
+        self.assertIsNone(reopened.get_meta("open_room"))
+        self.assertEqual(reopened.counts()["pending"], 1)
+
+
 class TestRejected(OutboxCase):
     def test_rejected_is_set_aside_not_deleted(self):
         self.outbox.enqueue_pin("R1", pin("P1"))

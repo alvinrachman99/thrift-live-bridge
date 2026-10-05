@@ -70,6 +70,29 @@ class TestLoad(SettingsCase):
         self.assertEqual(default_key_env("k7-m2"), "BRIDGE_KEY_K7_M2")
 
 
+class TestLiveSettings(SettingsCase):
+    def test_defaults(self):
+        settings = load_settings(self.write(ONE_CLIENT), {})
+        self.assertEqual(settings.poll_seconds, 60)
+        self.assertEqual(settings.sign_api_key, "")
+        self.assertIsNone(settings.client().tiktok)
+
+    def test_account_without_at_sign(self):
+        settings = load_settings(self.write(ONE_CLIENT + 'tiktok = " @Toko.Thrift "\n'), {})
+        self.assertEqual(settings.client().tiktok, "Toko.Thrift")
+
+    def test_poll_seconds(self):
+        settings = load_settings(self.write("poll_seconds = 30\n" + ONE_CLIENT), {})
+        self.assertEqual(settings.poll_seconds, 30)
+        self.assert_error("poll_seconds = 1\n" + ONE_CLIENT, "poll_seconds")
+        self.assert_error('poll_seconds = "60"\n' + ONE_CLIENT, "poll_seconds")
+
+    def test_sign_key_comes_from_environment_and_stays_out_of_repr(self):
+        settings = load_settings(self.write(ONE_CLIENT), {"EULER_API_KEY": " kunci-euler \n"})
+        self.assertEqual(settings.sign_api_key, "kunci-euler")
+        self.assertNotIn("kunci-euler", repr(settings))
+
+
 class TestSeveralClients(SettingsCase):
     TWO = ONE_CLIENT + '\n[[client]]\ncode = "k7m2"\nodoo_url = "http://caddy:8080"\n'
 

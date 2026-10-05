@@ -38,6 +38,10 @@ CREATE TABLE IF NOT EXISTS outbox (
 CREATE UNIQUE INDEX IF NOT EXISTS outbox_message_ref
     ON outbox (message_ref) WHERE message_ref IS NOT NULL;
 CREATE INDEX IF NOT EXISTS outbox_state ON outbox (state, id);
+CREATE TABLE IF NOT EXISTS meta (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
 """
 
 
@@ -173,6 +177,24 @@ class Outbox:
                 "WHERE state = 'rejected'"
             )
         return cursor.rowcount
+
+    # -- catatan kecil -----------------------------------------------------
+
+    def get_meta(self, key: str) -> str | None:
+        """Catatan yang harus bertahan saat bridge dihentikan dan dinyalakan lagi."""
+        row = self._db.execute("SELECT value FROM meta WHERE key = ?", (key,)).fetchone()
+        return row[0] if row else None
+
+    def set_meta(self, key: str, value: str | None) -> None:
+        with self._db:
+            if value is None:
+                self._db.execute("DELETE FROM meta WHERE key = ?", (key,))
+            else:
+                self._db.execute(
+                    "INSERT INTO meta (key, value) VALUES (?, ?) "
+                    "ON CONFLICT (key) DO UPDATE SET value = excluded.value",
+                    (key, value),
+                )
 
     # -- melihat dan merawat -----------------------------------------------
 

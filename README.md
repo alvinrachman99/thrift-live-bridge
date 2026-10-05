@@ -4,8 +4,9 @@ Jembatan antara TikTok LIVE dan antrian order di Odoo. Saat host menyematkan
 (pin) komentar pemenang di siaran, bridge membaca event itu dan mengirimkannya
 ke Odoo sebagai satu baris antrian. Order baru dibuat di Odoo, oleh admin.
 
-**Status: sedang dibangun.** Yang sudah ada baru antrian lokal dan pengirim
-ke Odoo. Pembaca siaran TikTok belum ada.
+**Status: sedang dibangun.** Yang sudah ada: antrian lokal, pengirim ke Odoo,
+dan pembaca siaran untuk satu akun. Belum ada: banyak akun sekaligus, laporan
+kesehatan ke Odoo, dan kemasan Docker.
 
 ## Rancangan
 
@@ -20,6 +21,24 @@ TikTok LIVE ──► bridge ──► Odoo (module thrift_live)
   sesi, menutup sesi, dan mengirim baris.
 - Data penonton yang disimpan bridge hanyalah antrian sementara miliknya
   sendiri, untuk menahan kiriman saat Odoo tidak bisa dihubungi.
+
+## Mengikuti siaran
+
+- **Menunggu:** bridge memeriksa tiap menit apakah akunnya sedang siaran.
+- **Sesi dibuka** saat tersambung, dan **ditutup** saat host mengakhiri siaran,
+  atau saat sambungan putus dan akunnya dipastikan sudah tidak siaran. Putus
+  saja bukan alasan menutup.
+- **Yang dikirim:** komentar yang disematkan. Pin yang dilepas, dan pin berisi
+  hadiah atau pesan lain, diabaikan.
+- **Yang dibawa dari tiap pin hanya yang dipakai:** ID pin, waktu, ID akun,
+  username, nama tampilan, dan teks komentar. Event aslinya memuat profil
+  lengkap penonton (bio, foto, statistik); semua itu ditinggal.
+- **Sambungan putus:** dicoba lagi setelah 5 detik, berlipat sampai 60 detik.
+  Setelah 10 kali gagal berturut-turut, satu percobaan tiap 10 menit. Selama
+  terputus, pin tidak terbaca.
+- **Bridge dihentikan:** sesi tidak ditutup. Bridge yang dinyalakan lagi
+  melanjutkan siaran yang sama, atau menutup sesinya kalau siaran itu ternyata
+  sudah berakhir.
 
 ## Tidak hilang, tidak dobel
 
@@ -49,6 +68,14 @@ pip install -e .
 cp clients.example.toml clients.toml     # lalu sesuaikan
 python -m unittest discover -s tests     # harus berakhir dengan OK
 ```
+
+```bash
+export EULER_API_KEY=...                 # key sign server; jangan ditulis ke file yang ikut git
+thrift-live-bridge run                   # ikuti siaran dan kirim pin-nya; Ctrl+C untuk berhenti
+thrift-live-bridge run --tiktok akun     # ikuti akun lain, untuk menguji
+```
+
+Bagian-bagiannya juga bisa dijalankan sendiri:
 
 ```bash
 thrift-live-bridge status                # isi antrian lokal

@@ -1,13 +1,16 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 """Baris perintah bridge.
 
+    python -m thrift_live_bridge run [--tiktok AKUN]
     python -m thrift_live_bridge status
     python -m thrift_live_bridge send [--once]
     python -m thrift_live_bridge requeue
     python -m thrift_live_bridge fake open|pin|close ...
 
-Perintah `fake` menaruh kiriman ke antrian lokal seolah-olah datang dari
-siaran. Gunanya menguji antrian dan pengirim tanpa TikTok.
+`run` adalah bridge yang sesungguhnya: mengikuti siaran satu akun dan
+mengirim pin-nya ke Odoo. Perintah `fake` menaruh kiriman ke antrian lokal
+seolah-olah datang dari siaran; gunanya menguji antrian dan pengirim tanpa
+TikTok.
 """
 from __future__ import annotations
 
@@ -15,13 +18,16 @@ import argparse
 import asyncio
 import logging
 import os
+import signal
 import sys
 import time
 
 from .odoo import OdooDoor, new_http_client
 from .outbox import Outbox, utc_now
 from .sender import Sender
-from .settings import DEFAULT_SETTINGS_FILE, ClientSettings, Settings, SettingsError, load_settings
+from .settings import (
+    DEFAULT_SETTINGS_FILE, SIGN_KEY_ENV, ClientSettings, Settings, SettingsError, load_settings,
+)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -35,6 +41,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--client", help="kode client; boleh dikosongkan kalau hanya ada satu")
     commands = parser.add_subparsers(dest="command", required=True, metavar="perintah")
+
+    run = commands.add_parser("run", help="ikuti siaran dan kirim pin-nya ke Odoo")
+    run.add_argument(
+        "--tiktok", metavar="AKUN",
+        help="username akun yang diikuti; menimpa isi file setelan (berguna untuk menguji)",
+    )
 
     commands.add_parser("status", help="lihat isi antrian lokal")
 
@@ -140,6 +152,60 @@ async def cmd_send(client: ClientSettings, settings: Settings, *, once: bool) ->
     return 0
 
 
+async def cmd_run(client: ClientSettings, settings: Settings, *, tiktok: str | None) -> int:
+    client.require_api_key()
+    account = (tiktok or client.tiktok or "").lstrip("@").strip()
+    if not account:
+        raise SettingsError(
+            f"Akun TikTok untuk client '{client.code}' belum diisi: tambahkan "
+            f"`tiktok = \"...\"` di file setelan, atau pakai --tiktok."
+        )
+    # Diimpor di sini: memuat library TikTok makan waktu, dan perintah lain
+    # tidak membutuhkannya.
+    from .reader import Reader
+    from .tiktok import TikTokSource
+
+    log = logging.getLogger(__name__)
+    if not settings.sign_api_key:
+        log.warning(
+            "Variabel %s kosong: menyambung tanpa key sign server, dengan batas yang lebih rendah.",
+            SIGN_KEY_ENV,
+        )
+    stop = asyncio.Event()
+    loop = asyncio.get_running_loop()
+    # Ctrl+C dan `docker stop` hanya menyalakan tanda berhenti. Sambungan ke
+    # siaran lalu diputus dengan rapi, bukan dibatalkan di tengah jalan.
+    for signum in (signal.SIGINT, signal.SIGTERM):
+        loop.add_signal_handler(signum, stop.set)
+
+    with Outbox(client.queue_path) as outbox:
+        async with new_http_client() as http:
+            sender = Sender(
+                outbox, OdooDoor(http, client), keep_sent_days=settings.keep_sent_days,
+            )
+            source = TikTokSource(account, settings.sign_api_key or None)
+            reader = Reader(
+                source, outbox, account=account, wake=sender.wake,
+                poll_seconds=settings.poll_seconds,
+            )
+            log.info("Bridge berjalan: client %s, akun @%s. Ctrl+C untuk berhenti.", client.code, account)
+            tasks = [
+                asyncio.create_task(sender.run(stop)),
+                asyncio.create_task(reader.run(stop)),
+            ]
+            # Kalau salah satu berhenti (diminta, atau karena galat), yang
+            # lain ikut dihentikan dengan rapi.
+            await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+            stop.set()
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            await source.close()
+    for result in results:
+        if isinstance(result, BaseException):
+            raise result
+    log.info("Berhenti. Sesi siaran tidak ditutup; bridge yang dinyalakan lagi melanjutkannya.")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     logging.basicConfig(
@@ -150,6 +216,8 @@ def main(argv: list[str] | None = None) -> int:
     try:
         settings = load_settings(args.settings)
         client = settings.client(args.client)
+        if args.command == "run":
+            return asyncio.run(cmd_run(client, settings, tiktok=args.tiktok))
         if args.command == "status":
             return cmd_status(client)
         if args.command == "requeue":

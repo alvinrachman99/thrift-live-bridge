@@ -17,6 +17,10 @@ from pathlib import Path
 DEFAULT_SETTINGS_FILE = "clients.toml"
 DEFAULT_DATA_DIR = "data"
 DEFAULT_KEEP_SENT_DAYS = 3
+DEFAULT_POLL_SECONDS = 60
+MIN_POLL_SECONDS = 5
+# Key sign server: satu untuk semua client, karena itu bukan setelan per client.
+SIGN_KEY_ENV = "EULER_API_KEY"
 
 # Kode client dipakai sebagai nama file antrian, jadi hurufnya dibatasi.
 _CODE_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
@@ -40,6 +44,8 @@ class ClientSettings:
     odoo_host: str | None = None
     # Header X-Odoo-Database.
     odoo_db: str | None = None
+    # Username akun TikTok yang siarannya diikuti, tanpa '@'.
+    tiktok: str | None = None
 
     def require_api_key(self) -> None:
         if not self.api_key:
@@ -53,6 +59,8 @@ class ClientSettings:
 class Settings:
     clients: tuple[ClientSettings, ...]
     keep_sent_days: int = DEFAULT_KEEP_SENT_DAYS
+    poll_seconds: int = DEFAULT_POLL_SECONDS
+    sign_api_key: str = field(default="", repr=False)
 
     def client(self, code: str | None = None) -> ClientSettings:
         """Client dengan kode itu; tanpa kode, satu-satunya client yang ada."""
@@ -109,6 +117,12 @@ def load_settings(
     if not isinstance(keep_sent_days, int) or isinstance(keep_sent_days, bool) or keep_sent_days < 0:
         raise SettingsError(f"{path}: 'keep_sent_days' harus bilangan bulat 0 atau lebih.")
 
+    poll_seconds = raw.get("poll_seconds", DEFAULT_POLL_SECONDS)
+    if not isinstance(poll_seconds, int) or isinstance(poll_seconds, bool) or poll_seconds < MIN_POLL_SECONDS:
+        raise SettingsError(
+            f"{path}: 'poll_seconds' harus bilangan bulat, minimal {MIN_POLL_SECONDS}."
+        )
+
     entries = raw.get("client")
     if not isinstance(entries, list) or not entries:
         raise SettingsError(f"{path}: belum ada client. Tambahkan minimal satu blok [[client]].")
@@ -139,5 +153,11 @@ def load_settings(
             api_key=(environ.get(api_key_env) or "").strip(),
             odoo_host=_text(entry, "odoo_host", where),
             odoo_db=_text(entry, "odoo_db", where),
+            tiktok=(_text(entry, "tiktok", where) or "").lstrip("@").strip() or None,
         ))
-    return Settings(clients=tuple(clients), keep_sent_days=keep_sent_days)
+    return Settings(
+        clients=tuple(clients),
+        keep_sent_days=keep_sent_days,
+        poll_seconds=poll_seconds,
+        sign_api_key=(environ.get(SIGN_KEY_ENV) or "").strip(),
+    )

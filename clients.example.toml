@@ -12,9 +12,14 @@ data_dir = "data"
 # Yang belum sampai tidak pernah dihapus.
 keep_sent_days = 3
 
+# Seberapa sering (detik) memeriksa apakah akunnya sedang siaran.
+poll_seconds = 60
+
 [[client]]
 # Kode client. Dipakai sebagai nama file antrian.
 code = "demo"
+# Username akun TikTok yang siarannya diikuti, tanpa '@'.
+tiktok = "nama_akun"
 # Alamat dasar Odoo.
 odoo_url = "http://localhost:8069"
 # Header X-Odoo-Database. Hapus kalau Odoo hanya punya satu database.

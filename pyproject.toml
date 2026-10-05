@@ -13,6 +13,7 @@ license-files = ["LICENSE"]
 dependencies = [
     # Versi dikunci: pembaruan diuji dulu, bukan datang sendiri.
     "httpx==0.28.1",
+    "TikTokLive==7.0.1",
 ]
 
 [project.scripts]
