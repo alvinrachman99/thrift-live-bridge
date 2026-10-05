@@ -1,0 +1,36 @@
+# Rahasia: tidak pernah masuk git. Repo ini akan dibuka untuk umum (AGPL),
+# dan saat itu SELURUH riwayat commit ikut terbuka — menghapus file belakangan
+# tidak menghapusnya dari riwayat.
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+secrets/
+
+# Data kerja: antrian lokal dan rekaman event memuat data penonton live.
+# Garis miring di depan = hanya folder di akar repo. Tanpa itu pola ini juga
+# menelan folder bernama sama di dalam kode.
+/data/
+*.sqlite
+*.sqlite3
+*.db
+*.jsonl
+*.log
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+/build/
+/dist/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Editor dan OS
+.vscode/
+.idea/
+.DS_Store
