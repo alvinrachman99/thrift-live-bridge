@@ -8,6 +8,10 @@
 *.pem
 secrets/
 
+# Setelan per server: bukan rahasia, tapi memuat daftar client. Yang ikut git
+# hanya clients.example.toml.
+/clients.toml
+
 # Data kerja: antrian lokal dan rekaman event memuat data penonton live.
 # Garis miring di depan = hanya folder di akar repo. Tanpa itu pola ini juga
 # menelan folder bernama sama di dalam kode.

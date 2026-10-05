@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "thrift-live-bridge"
+version = "0.1.0"
+description = "Jembatan TikTok LIVE ke antrian order di Odoo"
+readme = "README.md"
+requires-python = ">=3.12"
+license = "AGPL-3.0-only"
+license-files = ["LICENSE"]
+dependencies = [
+    # Versi dikunci: pembaruan diuji dulu, bukan datang sendiri.
+    "httpx==0.28.1",
+]
+
+[project.scripts]
+thrift-live-bridge = "thrift_live_bridge.__main__:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
