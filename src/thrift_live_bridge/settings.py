@@ -24,6 +24,9 @@ SIGN_KEY_ENV = "EULER_API_KEY"
 # Alamat ping layanan pemantau. Rahasia: siapa pun yang tahu alamatnya bisa
 # memalsukan tanda hidup.
 HEALTHCHECK_ENV = "BRIDGE_HEALTHCHECK_URL"
+# Folder antrian lokal. Menimpa `data_dir` di file setelan; dipakai image
+# Docker, supaya file setelan yang sama jalan di dalam dan di luar container.
+DATA_DIR_ENV = "BRIDGE_DATA_DIR"
 
 # Kode client dipakai sebagai nama file antrian, jadi hurufnya dibatasi.
 _CODE_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
@@ -111,7 +114,11 @@ def load_settings(
     except tomllib.TOMLDecodeError as exc:
         raise SettingsError(f"File setelan '{path}' tidak terbaca: {exc}") from None
 
-    data_dir = Path(_text(raw, "data_dir", str(path)) or DEFAULT_DATA_DIR)
+    data_dir = Path(
+        (environ.get(DATA_DIR_ENV) or "").strip()
+        or _text(raw, "data_dir", str(path))
+        or DEFAULT_DATA_DIR
+    )
     if not data_dir.is_absolute():
         # Relatif terhadap file setelan, bukan terhadap folder tempat perintah
         # dijalankan: antrian tidak boleh pindah hanya karena `cd`.

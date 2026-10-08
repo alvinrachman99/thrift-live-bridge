@@ -5,8 +5,8 @@ Jembatan antara TikTok LIVE dan antrian order di Odoo. Saat host menyematkan
 ke Odoo sebagai satu baris antrian. Order baru dibuat di Odoo, oleh admin.
 
 **Status: sedang dibangun.** Yang sudah ada: antrian lokal, pengirim ke Odoo,
-pembaca siaran, banyak client dalam satu proses, laporan status ke Odoo, dan
-ping ke layanan pemantau. Belum ada: kemasan Docker.
+pembaca siaran, banyak client dalam satu proses, laporan status ke Odoo, ping
+ke layanan pemantau, dan kemasan Docker.
 
 ## Rancangan
 
@@ -120,6 +120,26 @@ thrift-live-bridge fake open --ref T1
 thrift-live-bridge fake pin --ref T1 --nickname "Budi" --comment "kemeja 35"
 thrift-live-bridge fake close --ref T1
 ```
+
+## Docker
+
+```bash
+docker build -t thrift-live-bridge:0.1.0 .
+docker run --rm --env-file .env \
+  -v "$PWD/clients.toml:/config/clients.toml:ro" \
+  -v bridge-data:/data \
+  thrift-live-bridge:0.1.0
+```
+
+- Image dibangun dari `requirements.lock`, bukan dari `pyproject.toml`: versi
+  persis tiap paket, dan paket yang isinya tidak cocok dengan sidik jarinya
+  ditolak. Cara membuat ulang file itu tertulis di baris-baris awalnya.
+- Container berjalan sebagai user biasa, bukan root. Satu-satunya tempat ia
+  menulis adalah `/data`, antrian lokalnya.
+- Tiga hal datang dari luar image: file setelan di `/config/clients.toml`
+  (dipasang hanya-baca), volume `/data`, dan API key lewat environment.
+- `docker stop` menghentikannya dengan rapi: sambungan ke siaran diputus, dan
+  sesi tidak ditutup.
 
 ## Rahasia
 

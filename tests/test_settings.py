@@ -54,6 +54,13 @@ class TestLoad(SettingsCase):
         self.assertEqual(client.queue_path, Path("/var/lib/bridge/b47v.sqlite"))
         self.assertEqual(settings.keep_sent_days, 0)
 
+    def test_data_dir_from_environment_wins_over_the_file(self):
+        text = 'data_dir = "/var/lib/bridge"\n' + ONE_CLIENT
+        client = load_settings(self.write(text), {"BRIDGE_DATA_DIR": " /data "}).client()
+        self.assertEqual(client.queue_path, Path("/data/b47v.sqlite"))
+        client = load_settings(self.write(ONE_CLIENT), {"BRIDGE_DATA_DIR": "/data"}).client()
+        self.assertEqual(client.queue_path, Path("/data/b47v.sqlite"))
+
     def test_missing_key_is_only_an_error_when_needed(self):
         client = load_settings(self.write(ONE_CLIENT), {}).client()
         self.assertEqual(client.api_key, "")

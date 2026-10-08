@@ -1,0 +1,31 @@
+# Yang tidak boleh ikut ke proses build, apalagi ke dalam image.
+# Dockerfile memang hanya menyalin file yang ia sebut satu per satu; daftar
+# ini pengaman kedua, kalau suatu hari ada yang menulis `COPY . .`.
+
+# Rahasia dan setelan per server
+.env
+.env.*
+!.env.example
+clients.toml
+secrets
+*.key
+*.pem
+
+# Data kerja
+data
+*.sqlite
+*.sqlite3
+*.db
+*.jsonl
+*.log
+
+# Yang tidak dibutuhkan image
+.git
+.gitignore
+.venv
+venv
+tests
+**/__pycache__
+**/*.egg-info
+build
+dist
