@@ -4,9 +4,10 @@ Jembatan antara TikTok LIVE dan antrian order di Odoo. Saat host menyematkan
 (pin) komentar pemenang di siaran, bridge membaca event itu dan mengirimkannya
 ke Odoo sebagai satu baris antrian. Order baru dibuat di Odoo, oleh admin.
 
-**Status: sedang dibangun.** Yang sudah ada: antrian lokal, pengirim ke Odoo,
-pembaca siaran, banyak client dalam satu proses, laporan status ke Odoo, ping
-ke layanan pemantau, dan kemasan Docker.
+**Status: versi awal (0.1.x).** Semua bagiannya ada dan sudah dipakai mengikuti
+siaran sungguhan: antrian lokal, pengirim ke Odoo, pembaca siaran, banyak
+client dalam satu proses, laporan status ke Odoo, ping ke layanan pemantau,
+dan kemasan Docker.
 
 ## Rancangan
 
@@ -67,6 +68,20 @@ Dua tanda hidup, untuk dua pihak yang berbeda:
   `BRIDGE_HEALTHCHECK_URL` (misalnya healthchecks.io). Ping yang berhenti
   berarti prosesnya mati atau macet, dan pengelola server diberi tahu.
 
+## Log
+
+- **Galat dicatat dua lapis.** Ke Odoo hanya sampai alasan singkat untuk admin,
+  misalnya `jaringan bermasalah (ConnectError)`; teks asli galat tidak pernah
+  ikut. Di log, alasan itu diikuti `Rincian:` — galat aslinya dalam satu
+  baris, beserta sebab di baliknya. Alamat berparameter dan deretan panjang
+  tanpa spasi (key, token) dibuang lebih dulu, supaya log aman disalin.
+- **Gangguan saat memeriksa keadaan siaran dicatat awal dan pulihnya**,
+  lengkap dengan berapa kali dan berapa lama. Setelah 10 kali berturut-turut
+  dicatat sebagai galat: selama gangguan itu siaran yang baru mulai tidak
+  terlihat.
+- **Versi** tercatat saat bridge menyala, dan bisa ditanyakan dengan
+  `thrift-live-bridge --version`.
+
 ## Tidak hilang, tidak dobel
 
 Setiap kejadian dari siaran ditulis dulu ke antrian lokal (satu file SQLite per
@@ -124,11 +139,11 @@ thrift-live-bridge fake close --ref T1
 ## Docker
 
 ```bash
-docker build -t thrift-live-bridge:0.1.0 .
+docker build -t thrift-live-bridge:0.1.1 .
 docker run --rm --env-file .env \
   -v "$PWD/clients.toml:/config/clients.toml:ro" \
   -v bridge-data:/data \
-  thrift-live-bridge:0.1.0
+  thrift-live-bridge:0.1.1
 ```
 
 - Image dibangun dari `requirements.lock`, bukan dari `pyproject.toml`: versi

@@ -34,7 +34,16 @@ SourceEvent = Connected | Pin | Ended
 
 
 class SourceError(Exception):
-    """Gagal menyambung, sambungan putus, atau keadaan siaran tidak bisa dipastikan."""
+    """Gagal menyambung, sambungan putus, atau keadaan siaran tidak bisa dipastikan.
+
+    Pesannya singkat dan sampai ke layar admin. `detail` adalah galat aslinya
+    dalam satu baris, untuk log saja: yang mengurus server perlu tahu apakah
+    "jaringan bermasalah" itu DNS, sambungan yang ditolak, atau hal lain.
+    """
+
+    def __init__(self, message: str, detail: str = ""):
+        super().__init__(message)
+        self.detail = detail
 
 
 class NotLive(SourceError):
@@ -44,8 +53,8 @@ class NotLive(SourceError):
 class RateLimited(SourceError):
     """Penyedia tanda tangan meminta kita menunggu."""
 
-    def __init__(self, message: str, retry_after: float):
-        super().__init__(message)
+    def __init__(self, message: str, retry_after: float, detail: str = ""):
+        super().__init__(message, detail)
         self.retry_after = retry_after
 
 

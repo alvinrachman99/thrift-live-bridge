@@ -7,6 +7,8 @@ from types import SimpleNamespace
 
 import httpx
 from TikTokLive.client.errors import SignatureRateLimitError, UserOfflineError, WebcastBlockedError
+from TikTokLive.client.web.routes.fetch_is_live import MissingRoomIdInResponse
+from TikTokLive.client.web.web_settings import WebDefaults
 from TikTokLive.events import ConnectEvent, LiveEndEvent, RoomPinEvent
 from TikTokLive.events.proto_events import WebcastChatMessage
 from TikTokLiveProto.v3.webcast.im import PinMessageActionType
@@ -253,6 +255,7 @@ class TestSourceFailures(SourceCase):
         self.assertEqual(caught.exception.retry_after, 42.0)
         self.assertEqual(
             str(caught.exception), "penyedia tanda tangan meminta menunggu (SignatureRateLimitError)")
+        self.assertTrue(caught.exception.detail.startswith("SignatureRateLimitError"))
 
     async def test_rate_limited_without_header_still_waits(self):
         error = SignatureRateLimitError(
@@ -281,7 +284,9 @@ class TestSourceFailures(SourceCase):
             async for event in self.source.listen(self.stop):
                 got.append(event)
         self.assertEqual([type(e) for e in got], [Connected, Pin])
-        self.assertEqual(str(caught.exception), "ConnectionError: no close frame received")
+        self.assertEqual(str(caught.exception), "sambungan terputus (ConnectionError)")
+        self.assertEqual(
+            caught.exception.detail, "ConnectionError: no close frame received baris kedua")
 
     async def test_known_failures_get_a_reason_an_admin_can_read(self):
         from TikTokLive.client.errors import UserNotFoundError
@@ -290,6 +295,12 @@ class TestSourceFailures(SourceCase):
              "akun tidak ditemukan atau belum pernah siaran (UserNotFoundError)"),
             (httpx.ConnectError("gagal"), "jaringan bermasalah (ConnectError)"),
             (KeyError("data"), "jawaban TikTok tidak dikenali (KeyError)"),
+            (MissingRoomIdInResponse("Room ID 5 did not return any entries. This may be ..."),
+             "keterangan siaran belum terbaca (MissingRoomIdInResponse)"),
+            (TimeoutError(), "tidak ada jawaban sampai batas waktu (TimeoutError)"),
+            (ConnectionResetError(104, "Connection reset by peer"),
+             "sambungan terputus (ConnectionResetError)"),
+            (OSError(101, "Network is unreachable"), "jaringan bermasalah (OSError)"),
         ]
         for error, expected in cases:
             with self.subTest(error=type(error).__name__):
@@ -297,6 +308,66 @@ class TestSourceFailures(SourceCase):
                 with self.assertRaises(SourceError) as caught:
                     await self.source.is_live()
                 self.assertEqual(str(caught.exception), expected)
+
+    async def test_unknown_failure_never_shows_its_text_to_the_admin(self):
+        self.client.live = ValueError("teks asli dari library, bisa memuat apa saja")
+        with self.assertRaises(SourceError) as caught:
+            await self.source.is_live()
+        self.assertEqual(str(caught.exception), "galat yang belum dikenali (ValueError)")
+        self.assertEqual(
+            caught.exception.detail, "ValueError: teks asli dari library, bisa memuat apa saja")
+
+    async def test_detail_reaches_the_cause_the_library_wrapped(self):
+        # Pola library di fetch_is_live.py: galat apa pun dibungkus di dalam
+        # `except:` polos, jadi sebab aslinya hanya ada di __context__.
+        try:
+            try:
+                raise httpx.ConnectError("[Errno -3] Temporary failure in name resolution")
+            except Exception:
+                raise MissingRoomIdInResponse("Room ID 5 did not return any entries.")
+        except MissingRoomIdInResponse as wrapped:
+            self.client.start_error = wrapped
+        with self.assertRaises(SourceError) as caught:
+            await self.collect()
+        self.assertEqual(
+            str(caught.exception), "keterangan siaran belum terbaca (MissingRoomIdInResponse)")
+        # Library menambahkan versinya sendiri di depan pesan, jadi yang
+        # diperiksa ujung-ujungnya, bukan seluruh kalimat.
+        detail = caught.exception.detail
+        self.assertTrue(detail.startswith("MissingRoomIdInResponse: "), detail)
+        self.assertIn("Room ID 5 did not return any entries.", detail)
+        self.assertTrue(
+            detail.endswith("<- ConnectError: [Errno -3] Temporary failure in name resolution"),
+            detail,
+        )
+
+    async def test_detail_never_carries_secrets(self):
+        previous = WebDefaults.tiktok_sign_api_key
+        self.addCleanup(setattr, WebDefaults, "tiktok_sign_api_key", previous)
+        WebDefaults.tiktok_sign_api_key = "kunci-pendek-uji"
+        token = "A1b2C3d4" * 6
+        self.client.live = RuntimeError(
+            "gagal ke https://sign.example/webcast/fetch?apiKey=abc123&room_id=7694307199224384277 "
+            f"dengan token {token} dan key kunci-pendek-uji untuk siaran 7694307199224384277"
+        )
+        with self.assertRaises(SourceError) as caught:
+            await self.source.is_live()
+        detail = caught.exception.detail
+        self.assertEqual(
+            detail,
+            "RuntimeError: gagal ke https://sign.example/webcast/fetch?… dengan token … "
+            "dan key … untuk siaran 7694307199224384277",
+        )
+        for secret in ("kunci-pendek-uji", "apiKey", "abc123", token):
+            self.assertNotIn(secret, detail)
+
+    async def test_detail_is_one_bounded_line(self):
+        self.client.live = RuntimeError("baris satu\n" + "kata " * 400)
+        with self.assertRaises(SourceError) as caught:
+            await self.source.is_live()
+        self.assertNotIn("\n", caught.exception.detail)
+        self.assertLessEqual(len(caught.exception.detail), 300)
+        self.assertTrue(caught.exception.detail.startswith("RuntimeError: baris satu kata"))
 
     async def test_is_live_failure_is_a_source_error(self):
         self.client.live = KeyError("data")

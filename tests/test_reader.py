@@ -6,7 +6,7 @@ from pathlib import Path
 from unittest import mock
 
 from thrift_live_bridge.outbox import Outbox
-from thrift_live_bridge.reader import LONG_PAUSE, Reader, reconnect_delay, room_key
+from thrift_live_bridge.reader import LONG_PAUSE, Reader, duration_text, reconnect_delay, room_key
 from thrift_live_bridge.sender import Sender
 from thrift_live_bridge.source import Connected, Ended, NotLive, Pin, RateLimited, SourceError
 
@@ -279,11 +279,94 @@ class TestStatus(ReaderCase):
             await self.run_reader(source, pauses=3)
         self.assertEqual(self.statuses, [("retrying", None, 0), ("waiting", None, 0)])
 
+    async def test_detail_goes_to_the_log_but_not_to_the_status(self):
+        error = SourceError(
+            "jaringan bermasalah (ConnectError)",
+            "ConnectError: [Errno -3] Temporary failure in name resolution",
+        )
+        source = FakeSource(live=[error, False])
+        with self.assertLogs("thrift_live_bridge.reader", level="WARNING") as logs:
+            await self.run_reader(source, pauses=1)
+        self.assertIn(
+            "(jaringan bermasalah (ConnectError)). Rincian: ConnectError: [Errno -3] Temporary",
+            logs.output[0],
+        )
+        self.assertEqual(self.reader.status.message, "jaringan bermasalah (ConnectError)")
+
+    async def test_connect_failure_logs_its_detail_too(self):
+        error = SourceError("keterangan siaran belum terbaca (MissingRoomIdInResponse)", "IndexError: x")
+        source = FakeSource(live=[True], connections=[[error]])
+        with self.assertLogs("thrift_live_bridge.reader", level="WARNING") as logs:
+            await self.run_reader(source, pauses=1)
+        self.assertTrue(logs.output[0].endswith("(gagal ke-1). Rincian: IndexError: x"))
+        self.assertEqual(
+            self.reader.status.message, "keterangan siaran belum terbaca (MissingRoomIdInResponse)")
+
+    async def test_failure_without_detail_logs_no_empty_tail(self):
+        source = FakeSource(live=[True], connections=[[SourceError("putus")]])
+        with self.assertLogs("thrift_live_bridge.reader", level="WARNING") as logs:
+            await self.run_reader(source, pauses=1)
+        self.assertTrue(logs.output[0].endswith("(gagal ke-1)."))
+
     async def test_open_broadcast_from_before_restart_is_known_at_start(self):
         self.outbox.set_meta(OPEN_ROOM, "R9")
         reader = Reader(FakeSource(), self.outbox, account="@toko")
         self.assertEqual(reader.status.room, "R9")
         self.assertEqual(reader.status.state, "waiting")
+
+
+class TestBlindStreak(ReaderCase):
+    """Selama keadaan siaran tidak terbaca, siaran baru tidak akan terlihat."""
+
+    def test_duration_text(self):
+        self.assertEqual(
+            [duration_text(s) for s in (0, 45, 59.4, 60, 725, 3600, 11100)],
+            ["0 detik", "45 detik", "59 detik", "1 menit", "12 menit", "1 jam", "3 jam 5 menit"],
+        )
+
+    async def test_recovery_is_logged_with_the_length_of_the_streak(self):
+        error = SourceError("jaringan bermasalah (ConnectError)")
+        source = FakeSource(live=[False, error, error, error, False, False])
+        with self.assertLogs("thrift_live_bridge.reader", level="INFO") as logs:
+            await self.run_reader(source, pauses=6)
+        recovered = [line for line in logs.output if "terbaca lagi" in line]
+        self.assertEqual(len(recovered), 1)
+        self.assertIn("terbaca lagi setelah 3 kali gagal berturut-turut (0 detik)", recovered[0])
+        # Awalnya tetap dicatat sekali saja, bukan tiap kali diperiksa.
+        self.assertEqual(sum("tidak bisa dipastikan" in line for line in logs.output), 1)
+
+    async def test_each_streak_is_counted_on_its_own(self):
+        error = SourceError("jaringan bermasalah (ConnectError)")
+        source = FakeSource(live=[error, False, error, error, False])
+        with self.assertLogs("thrift_live_bridge.reader", level="INFO") as logs:
+            await self.run_reader(source, pauses=5)
+        recovered = [line for line in logs.output if "terbaca lagi" in line]
+        self.assertEqual(len(recovered), 2)
+        self.assertIn("setelah 1 kali gagal", recovered[0])
+        self.assertIn("setelah 2 kali gagal", recovered[1])
+
+    async def test_recovery_into_a_live_broadcast_is_logged_too(self):
+        error = SourceError("jaringan bermasalah (ConnectError)")
+        source = FakeSource(live=[error, True], connections=[[Connected("R1"), Ended()]])
+        with self.assertLogs("thrift_live_bridge.reader", level="INFO") as logs:
+            await self.run_reader(source, pauses=2)
+        self.assertEqual(sum("terbaca lagi setelah 1 kali gagal" in line for line in logs.output), 1)
+        self.assertEqual(self.queued(), [("open", "R1"), ("close", "R1")])
+
+    async def test_no_recovery_line_without_a_failure(self):
+        source = FakeSource(live=[False, False, True], connections=[[Connected("R1"), Ended()]])
+        with self.assertLogs("thrift_live_bridge.reader", level="INFO") as logs:
+            await self.run_reader(source, pauses=3)
+        self.assertFalse(any("terbaca lagi" in line for line in logs.output))
+
+    async def test_long_streak_is_an_error_once(self):
+        error = SourceError("jaringan bermasalah (ConnectError)")
+        source = FakeSource(live=[error] * 25)
+        with self.assertLogs("thrift_live_bridge.reader", level="ERROR") as logs:
+            await self.run_reader(source, pauses=25)
+        self.assertEqual(len(logs.output), 1)
+        self.assertIn("tidak terbaca 10 kali berturut-turut", logs.output[0])
+        self.assertIn("pakai input manual", logs.output[0])
 
 
 class TestTwoAccountsOneClient(ReaderCase):

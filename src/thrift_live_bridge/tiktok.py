@@ -19,6 +19,7 @@ import asyncio
 import base64
 import json
 import logging
+import re
 from collections.abc import AsyncIterator
 from datetime import datetime, timedelta, timezone
 
@@ -34,7 +35,9 @@ _logger = logging.getLogger(__name__)
 
 # PinMessageActionType: 1 = disematkan, 2 = dilepas.
 ACTION_PIN = 1
-ERROR_TEXT_MAX = 200
+# Batas rincian galat di log, dan berapa lapis sebab yang ditelusuri.
+DETAIL_MAX = 300
+DETAIL_DEPTH = 4
 # Batas cuplikan event yang gagal dibaca, saat dicatat ke log.
 DUMP_MAX = 4000
 DEFAULT_RETRY_AFTER = 60.0
@@ -144,20 +147,65 @@ _REASONS = {
     "WebcastBlockedError": "sambungan ditolak TikTok",
     "SignatureRateLimitError": "penyedia tanda tangan meminta menunggu",
     "SignAPIError": "penyedia tanda tangan gagal",
+    # Library memakai galat ini untuk kegagalan APA PUN saat menanyakan
+    # keadaan satu siaran, termasuk galat jaringan biasa; kalimat bawaannya
+    # ("being detected by TikTok") hanya dugaan. Sebab aslinya ada di rincian.
+    "MissingRoomIdInResponse": "keterangan siaran belum terbaca",
     "ConnectionClosed": "sambungan terputus",
     "TransportError": "jaringan bermasalah",
+    "ConnectionError": "sambungan terputus",
+    "TimeoutError": "tidak ada jawaban sampai batas waktu",
+    "OSError": "jaringan bermasalah",
     "KeyError": "jawaban TikTok tidak dikenali",
     "TypeError": "jawaban TikTok tidak dikenali",
 }
 
 
 def _brief(exc: BaseException) -> str:
+    """Alasan untuk layar admin. Teks asli galat tidak pernah ikut ke sana."""
     name = type(exc).__name__
     for cls in type(exc).__mro__:
         if cls.__name__ in _REASONS:
             return f"{_REASONS[cls.__name__]} ({name})"
-    text = (str(exc).strip().splitlines() or [""])[0]
-    return f"{name}: {text}"[:ERROR_TEXT_MAX].rstrip(": ")
+    return f"galat yang belum dikenali ({name})"
+
+
+# Alamat dengan parameter (tanda tangan, key) dan deretan panjang tanpa spasi
+# (key, token). Nomor siaran dan ID pin, 19 angka, tidak ikut terbuang.
+_URL_QUERY = re.compile(r"(https?://[^\s?'\"<>]+)\?[^\s'\"<>]*")
+_LONG_TOKEN = re.compile(r"[A-Za-z0-9_\-]{32,}")
+
+
+def _scrub(text: str) -> str:
+    """Buang yang mungkin rahasia dari teks galat sebelum masuk log.
+
+    Log disalin ke tempat lain saat mencari masalah, jadi diperlakukan
+    seperti akan dibaca orang lain.
+    """
+    key = WebDefaults.tiktok_sign_api_key
+    if key:
+        text = text.replace(key, "…")
+    text = _URL_QUERY.sub(r"\1?…", text)
+    return _LONG_TOKEN.sub("…", text)
+
+
+def _detail(exc: BaseException) -> str:
+    """Galat asli dalam satu baris, beserta sebab di baliknya, untuk log.
+
+    Sebabnya ditelusuri lewat `__cause__` dan `__context__`: library kadang
+    membungkus galat apa pun dengan galatnya sendiri, dan hanya di rantai
+    itulah galat yang sebenarnya masih terbaca.
+    """
+    parts: list[str] = []
+    seen: set[int] = set()
+    current: BaseException | None = exc
+    while current is not None and id(current) not in seen and len(parts) < DETAIL_DEPTH:
+        seen.add(id(current))
+        text = " ".join(str(current).split())
+        name = type(current).__name__
+        parts.append(f"{name}: {text}" if text else name)
+        current = current.__cause__ or current.__context__
+    return _scrub(" <- ".join(parts))[:DETAIL_MAX]
 
 
 class TikTokSource:
@@ -206,7 +254,7 @@ class TikTokSource:
         try:
             return bool(await self._client.is_live())
         except Exception as exc:  # noqa: BLE001 - library melempar banyak jenis galat
-            raise SourceError(_brief(exc)) from None
+            raise SourceError(_brief(exc), _detail(exc)) from None
 
     async def listen(self, stop: asyncio.Event) -> AsyncIterator[SourceEvent]:
         while not self._queue.empty():      # sisa sambungan sebelumnya
@@ -220,9 +268,9 @@ class TikTokSource:
                 retry_after = float(exc.retry_after)
             except Exception:  # noqa: BLE001 - header-nya bisa tidak ada
                 retry_after = DEFAULT_RETRY_AFTER
-            raise RateLimited(_brief(exc), retry_after) from None
+            raise RateLimited(_brief(exc), retry_after, _detail(exc)) from None
         except Exception as exc:  # noqa: BLE001
-            raise SourceError(_brief(exc)) from None
+            raise SourceError(_brief(exc), _detail(exc)) from None
 
         stopping = asyncio.ensure_future(stop.wait())
         try:
@@ -241,7 +289,7 @@ class TikTokSource:
                 while not self._queue.empty():
                     yield self._queue.get_nowait()
                 if not task.cancelled() and task.exception() is not None:
-                    raise SourceError(_brief(task.exception()))
+                    raise SourceError(_brief(task.exception()), _detail(task.exception()))
                 return
         finally:
             stopping.cancel()

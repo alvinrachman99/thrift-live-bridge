@@ -22,6 +22,7 @@ import signal
 import sys
 import time
 
+from . import __version__
 from .odoo import OdooDoor, new_http_client
 from .outbox import Outbox, utc_now
 from .sender import Sender
@@ -34,6 +35,7 @@ def build_parser() -> argparse.ArgumentParser:
         prog="thrift-live-bridge",
         description="Jembatan TikTok LIVE ke antrian order di Odoo.",
     )
+    parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     parser.add_argument(
         "--settings", default=os.environ.get("BRIDGE_SETTINGS", DEFAULT_SETTINGS_FILE),
         help="file setelan (bawaan: clients.toml)",
@@ -168,7 +170,8 @@ async def cmd_run(settings: Settings, *, client_code: str | None, tiktok: str | 
     for signum in (signal.SIGINT, signal.SIGTERM):
         loop.add_signal_handler(signum, stop.set)
     log = logging.getLogger(__name__)
-    log.info("Bridge berjalan. Ctrl+C untuk berhenti.")
+    # Versinya ikut dicatat: setelah naik versi, log inilah buktinya.
+    log.info("Bridge %s berjalan. Ctrl+C untuk berhenti.", __version__)
     await run_all(settings, clients, stop, tiktok=tiktok)
     log.info("Berhenti. Sesi siaran tidak ditutup; bridge yang dinyalakan lagi melanjutkannya.")
     return 0

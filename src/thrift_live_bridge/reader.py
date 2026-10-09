@@ -25,6 +25,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 
@@ -40,6 +41,9 @@ LONG_PAUSE_AFTER = 10
 LONG_PAUSE = 600.0
 # Batas atas menunggu atas permintaan penyedia tanda tangan.
 RATE_LIMIT_MAX = 3600.0
+# Setelah sekian kali berturut-turut keadaan siaran tidak terbaca, dicatat
+# sebagai galat: selama itu siaran yang baru mulai tidak akan terlihat.
+CHECK_ERROR_AFTER = 10
 # Awalan kunci catatan "siaran yang sesinya sedang terbuka" di antrian lokal.
 ROOM_PREFIX = "open_room:"
 
@@ -51,6 +55,22 @@ def room_key(account: str) -> str:
     akun, dan siaran akun yang satu tidak boleh menutup sesi akun yang lain.
     """
     return ROOM_PREFIX + account.lstrip("@").strip().lower()
+
+
+def duration_text(seconds: float) -> str:
+    """Lama dalam kata, untuk log: '45 detik', '12 menit', '3 jam 5 menit'."""
+    seconds = int(round(seconds))
+    if seconds < 60:
+        return f"{seconds} detik"
+    hours, minutes = divmod(seconds // 60, 60)
+    if not hours:
+        return f"{minutes} menit"
+    return f"{hours} jam {minutes} menit" if minutes else f"{hours} jam"
+
+
+def _detail_suffix(detail: str | None) -> str:
+    """Rincian galat untuk ditempel di akhir baris log; kosong kalau tidak ada."""
+    return f" Rincian: {detail}" if detail else ""
 
 
 def reconnect_delay(failures: int) -> float:
@@ -77,6 +97,7 @@ class _Outcome:
     ended: bool = False
     not_live: bool = False
     error: str | None = None
+    detail: str = ""                # galat aslinya, untuk log saja
     retry_after: float = 0.0
 
 
@@ -104,6 +125,9 @@ class Reader:
         self._wake = wake or (lambda: None)
         self._poll_seconds = poll_seconds
         self._waiting_logged = False
+        # Pemeriksaan keadaan siaran yang gagal berturut-turut, dan sejak kapan.
+        self._check_failures = 0
+        self._check_failed_since = 0.0
 
     async def run(self, stop: asyncio.Event) -> None:
         failures = 0
@@ -148,23 +172,46 @@ class Reader:
                     self._account, failures, LONG_PAUSE / 60,
                 )
             self._log.warning(
-                "@%s: %s. Dicoba lagi dalam %.0f detik (gagal ke-%s).",
+                "@%s: %s. Dicoba lagi dalam %.0f detik (gagal ke-%s).%s",
                 self._account, outcome.error or "sambungan putus", delay, failures,
+                _detail_suffix(outcome.detail),
             )
             await self._pause(stop, delay)
 
     async def _check_live(self) -> bool | None:
         """True/False kalau pasti; None kalau sumbernya tidak bisa memastikan."""
         try:
-            return await self._source.is_live()
+            live = await self._source.is_live()
         except SourceError as exc:
+            if not self._check_failures:
+                self._check_failed_since = time.monotonic()
+            self._check_failures += 1
             # Dicatat sekali per sebab, bukan tiap kali diperiksa: akun yang
             # salah ketik tidak boleh mengisi log satu baris per menit.
             repeated = (self.status.state, self.status.message) == ("retrying", str(exc))
             log = self._log.debug if repeated else self._log.warning
-            log("@%s: status siaran tidak bisa dipastikan (%s).", self._account, exc)
+            log(
+                "@%s: status siaran tidak bisa dipastikan (%s).%s",
+                self._account, exc, _detail_suffix(exc.detail),
+            )
+            if self._check_failures == CHECK_ERROR_AFTER:
+                self._log.error(
+                    "@%s: status siaran tidak terbaca %s kali berturut-turut (%s). Selama "
+                    "ini siaran yang baru mulai tidak akan terlihat; pakai input manual.",
+                    self._account, self._check_failures,
+                    duration_text(time.monotonic() - self._check_failed_since),
+                )
             self._set_status("retrying", failures=self.status.failures, message=str(exc))
             return None
+        if self._check_failures:
+            # Tanpa baris ini lamanya bridge "buta" tidak bisa dihitung dari log.
+            self._log.info(
+                "@%s: status siaran terbaca lagi setelah %s kali gagal berturut-turut (%s).",
+                self._account, self._check_failures,
+                duration_text(time.monotonic() - self._check_failed_since),
+            )
+            self._check_failures = 0
+        return live
 
     def _set_status(self, state: str, *, failures: int = 0, message: str | None = None) -> None:
         """Perbarui keadaan; pelapor dibangunkan hanya kalau ada yang berubah."""
@@ -198,9 +245,11 @@ class Reader:
             outcome.not_live = True
         except RateLimited as exc:
             outcome.error = str(exc)
+            outcome.detail = exc.detail
             outcome.retry_after = exc.retry_after
         except SourceError as exc:
             outcome.error = str(exc)
+            outcome.detail = exc.detail
         return outcome
 
     # -- catatan ke antrian lokal -------------------------------------------
