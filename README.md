@@ -139,11 +139,11 @@ thrift-live-bridge fake close --ref T1
 ## Docker
 
 ```bash
-docker build -t thrift-live-bridge:0.1.1 .
+docker build -t thrift-live-bridge:0.1.2 .
 docker run --rm --env-file .env \
   -v "$PWD/clients.toml:/config/clients.toml:ro" \
   -v bridge-data:/data \
-  thrift-live-bridge:0.1.1
+  thrift-live-bridge:0.1.2
 ```
 
 - Image dibangun dari `requirements.lock`, bukan dari `pyproject.toml`: versi

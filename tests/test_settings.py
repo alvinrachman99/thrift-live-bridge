@@ -7,10 +7,10 @@ from thrift_live_bridge.settings import SettingsError, default_key_env, load_set
 
 ONE_CLIENT = """
 [[client]]
-code = "b47v"
+code = "a5tr"
 odoo_url = "http://caddy:8080/"
-odoo_host = "b47v.contoh.id"
-odoo_db = "b47v"
+odoo_host = "a5tr.contoh.id"
+odoo_db = "a5tr"
 """
 
 
@@ -33,47 +33,47 @@ class SettingsCase(unittest.TestCase):
 
 class TestLoad(SettingsCase):
     def test_one_client(self):
-        settings = load_settings(self.write(ONE_CLIENT), {"BRIDGE_KEY_B47V": " rahasia \n"})
+        settings = load_settings(self.write(ONE_CLIENT), {"BRIDGE_KEY_A5TR": " rahasia \n"})
         client = settings.client()
-        self.assertEqual(client.code, "b47v")
+        self.assertEqual(client.code, "a5tr")
         self.assertEqual(client.odoo_url, "http://caddy:8080")
-        self.assertEqual(client.odoo_host, "b47v.contoh.id")
-        self.assertEqual(client.odoo_db, "b47v")
+        self.assertEqual(client.odoo_host, "a5tr.contoh.id")
+        self.assertEqual(client.odoo_db, "a5tr")
         self.assertEqual(client.api_key, "rahasia")
         self.assertEqual(settings.keep_sent_days, 3)
 
     def test_queue_lives_next_to_settings_file_not_cwd(self):
         client = load_settings(self.write(ONE_CLIENT), {}).client()
-        self.assertEqual(client.queue_path, self.folder.resolve() / "data" / "b47v.sqlite")
+        self.assertEqual(client.queue_path, self.folder.resolve() / "data" / "a5tr.sqlite")
 
     def test_custom_key_variable_and_data_dir(self):
         text = 'data_dir = "/var/lib/bridge"\nkeep_sent_days = 0\n' + ONE_CLIENT + 'api_key_env = "KUNCI"\n'
-        settings = load_settings(self.write(text), {"KUNCI": "abc", "BRIDGE_KEY_B47V": "bukan ini"})
-        client = settings.client("b47v")
+        settings = load_settings(self.write(text), {"KUNCI": "abc", "BRIDGE_KEY_A5TR": "bukan ini"})
+        client = settings.client("a5tr")
         self.assertEqual(client.api_key, "abc")
-        self.assertEqual(client.queue_path, Path("/var/lib/bridge/b47v.sqlite"))
+        self.assertEqual(client.queue_path, Path("/var/lib/bridge/a5tr.sqlite"))
         self.assertEqual(settings.keep_sent_days, 0)
 
     def test_data_dir_from_environment_wins_over_the_file(self):
         text = 'data_dir = "/var/lib/bridge"\n' + ONE_CLIENT
         client = load_settings(self.write(text), {"BRIDGE_DATA_DIR": " /data "}).client()
-        self.assertEqual(client.queue_path, Path("/data/b47v.sqlite"))
+        self.assertEqual(client.queue_path, Path("/data/a5tr.sqlite"))
         client = load_settings(self.write(ONE_CLIENT), {"BRIDGE_DATA_DIR": "/data"}).client()
-        self.assertEqual(client.queue_path, Path("/data/b47v.sqlite"))
+        self.assertEqual(client.queue_path, Path("/data/a5tr.sqlite"))
 
     def test_missing_key_is_only_an_error_when_needed(self):
         client = load_settings(self.write(ONE_CLIENT), {}).client()
         self.assertEqual(client.api_key, "")
         with self.assertRaises(SettingsError) as caught:
             client.require_api_key()
-        self.assertIn("BRIDGE_KEY_B47V", str(caught.exception))
+        self.assertIn("BRIDGE_KEY_A5TR", str(caught.exception))
 
     def test_key_is_not_in_repr(self):
-        client = load_settings(self.write(ONE_CLIENT), {"BRIDGE_KEY_B47V": "rahasia-sekali"}).client()
+        client = load_settings(self.write(ONE_CLIENT), {"BRIDGE_KEY_A5TR": "rahasia-sekali"}).client()
         self.assertNotIn("rahasia-sekali", repr(client))
 
     def test_default_key_variable_name(self):
-        self.assertEqual(default_key_env("thrift_tes8"), "BRIDGE_KEY_THRIFT_TES8")
+        self.assertEqual(default_key_env("toko_uji"), "BRIDGE_KEY_TOKO_UJI")
         self.assertEqual(default_key_env("k7-m2"), "BRIDGE_KEY_K7_M2")
 
 
@@ -123,7 +123,7 @@ class TestSeveralClients(SettingsCase):
         self.assertEqual(settings.client("k7m2").code, "k7m2")
         with self.assertRaises(SettingsError) as caught:
             settings.client()
-        self.assertIn("b47v, k7m2", str(caught.exception))
+        self.assertIn("a5tr, k7m2", str(caught.exception))
 
     def test_unknown_code(self):
         settings = load_settings(self.write(self.TWO), {})

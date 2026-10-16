@@ -33,15 +33,15 @@ class TestRequest(unittest.IsolatedAsyncioTestCase):
             seen["body"] = json.loads(request.content)
             return httpx.Response(200, json={"id": 4, "name": "THS/1", "state": "open"})
 
-        http, door = door_with(handler, odoo_host="b47v.contoh.id", odoo_db="b47v")
+        http, door = door_with(handler, odoo_host="a5tr.contoh.id", odoo_db="a5tr")
         async with http:
             answer = await door.call("open_session", {"external_ref": "R1"})
 
         self.assertEqual(answer, {"id": 4, "name": "THS/1", "state": "open"})
         self.assertEqual(seen["url"], "http://odoo.test:8069/json/2/thrift.bot/open_session")
         self.assertEqual(seen["headers"]["authorization"], f"bearer {KEY}")
-        self.assertEqual(seen["headers"]["host"], "b47v.contoh.id")
-        self.assertEqual(seen["headers"]["x-odoo-database"], "b47v")
+        self.assertEqual(seen["headers"]["host"], "a5tr.contoh.id")
+        self.assertEqual(seen["headers"]["x-odoo-database"], "a5tr")
         self.assertEqual(seen["headers"]["content-type"], "application/json")
         self.assertEqual(seen["body"], {"external_ref": "R1"})
 

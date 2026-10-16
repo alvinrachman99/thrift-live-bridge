@@ -6,7 +6,9 @@ from pathlib import Path
 from unittest import mock
 
 from thrift_live_bridge.outbox import Outbox
-from thrift_live_bridge.reader import LONG_PAUSE, Reader, duration_text, reconnect_delay, room_key
+from thrift_live_bridge.reader import (
+    LONG_PAUSE, QUICK_RECHECK, Reader, duration_text, reconnect_delay, room_key,
+)
 from thrift_live_bridge.sender import Sender
 from thrift_live_bridge.source import Connected, Ended, NotLive, Pin, RateLimited, SourceError
 
@@ -162,7 +164,8 @@ class TestDrops(ReaderCase):
         with self.assertLogs("thrift_live_bridge.reader", level="WARNING"):
             await self.run_reader(source, pauses=4)
         self.assertEqual(self.queued(), [("open", "R1"), ("open", "R1"), ("close", "R1")])
-        self.assertEqual(self.pauses, [5.0, POLL, POLL, POLL])
+        # Gagal pertama diulang cepat; yang kedua berturut-turut menunggu biasa.
+        self.assertEqual(self.pauses, [5.0, QUICK_RECHECK, POLL, POLL])
 
     async def test_new_broadcast_closes_the_old_one_first(self):
         source = FakeSource(live=[True, True], connections=[
@@ -271,6 +274,13 @@ class TestStatus(ReaderCase):
             ("connected", "R1", 0), ("retrying", "R1", 1),
         ])
         self.assertEqual(self.reader.status.message, "ConnectionClosedError")
+
+    async def test_unreadable_status_is_rechecked_quickly_once(self):
+        error = SourceError("jaringan bermasalah (ConnectError)")
+        source = FakeSource(live=[error, False, error, error, False])
+        with self.assertLogs("thrift_live_bridge.reader", level="WARNING"):
+            await self.run_reader(source, pauses=5)
+        self.assertEqual(self.pauses, [QUICK_RECHECK, POLL, QUICK_RECHECK, POLL, POLL])
 
     async def test_unknown_live_status_is_reported_once(self):
         error = SourceError("KeyError: data")

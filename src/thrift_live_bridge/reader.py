@@ -44,6 +44,10 @@ RATE_LIMIT_MAX = 3600.0
 # Setelah sekian kali berturut-turut keadaan siaran tidak terbaca, dicatat
 # sebagai galat: selama itu siaran yang baru mulai tidak akan terlihat.
 CHECK_ERROR_AFTER = 10
+# Pemeriksaan status siaran yang gagal pertama kali diulang secepat ini, bukan
+# menunggu jeda biasa: gangguan jaringan umumnya hanya sesaat, dan selama
+# menunggu, siaran yang baru mulai tidak terlihat.
+QUICK_RECHECK = 10.0
 # Awalan kunci catatan "siaran yang sesinya sedang terbuka" di antrian lokal.
 ROOM_PREFIX = "open_room:"
 
@@ -147,7 +151,10 @@ class Reader:
                             self._account, self._poll_seconds,
                         )
                         self._waiting_logged = True
-                await self._pause(stop, self._poll_seconds)
+                delay = self._poll_seconds
+                if live is None and self._check_failures == 1:
+                    delay = min(QUICK_RECHECK, self._poll_seconds)
+                await self._pause(stop, delay)
                 continue
 
             self._waiting_logged = False

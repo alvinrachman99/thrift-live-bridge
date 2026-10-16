@@ -203,7 +203,11 @@ def _detail(exc: BaseException) -> str:
         seen.add(id(current))
         text = " ".join(str(current).split())
         name = type(current).__name__
-        parts.append(f"{name}: {text}" if text else name)
+        part = f"{name}: {text}" if text else name
+        # Library kadang membungkus galat dengan salinan dirinya sendiri; yang
+        # sama persis ditulis sekali saja.
+        if part not in parts:
+            parts.append(part)
         current = current.__cause__ or current.__context__
     return _scrub(" <- ".join(parts))[:DETAIL_MAX]
 

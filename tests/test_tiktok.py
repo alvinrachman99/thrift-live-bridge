@@ -317,6 +317,23 @@ class TestSourceFailures(SourceCase):
         self.assertEqual(
             caught.exception.detail, "ValueError: teks asli dari library, bisa memuat apa saja")
 
+    async def test_detail_writes_a_repeated_cause_once(self):
+        # Rantai dari log 9-10 Oktober: galat yang sama terbungkus dua kali.
+        try:
+            try:
+                try:
+                    raise httpx.ConnectError("All connection attempts failed")
+                except Exception as inner:
+                    raise httpx.ConnectError("All connection attempts failed") from inner
+            except Exception:
+                raise MissingRoomIdInResponse("Room ID 5 did not return any entries.")
+        except MissingRoomIdInResponse as wrapped:
+            self.client.start_error = wrapped
+        with self.assertRaises(SourceError) as caught:
+            await self.collect()
+        detail = caught.exception.detail
+        self.assertEqual(detail.count("ConnectError: All connection attempts failed"), 1, detail)
+
     async def test_detail_reaches_the_cause_the_library_wrapped(self):
         # Pola library di fetch_is_live.py: galat apa pun dibungkus di dalam
         # `except:` polos, jadi sebab aslinya hanya ada di __context__.
